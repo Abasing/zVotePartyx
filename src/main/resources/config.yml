@@ -80,6 +80,7 @@ party:
   # This command will be executed in the console, you cannot specify a player here
   commands:
     - "eco give * 0.0000000009"  
+  Sound: ui.toast.challenge_complete:1:2
     
   # Rewards that the player can get randomly 
   rewards:
