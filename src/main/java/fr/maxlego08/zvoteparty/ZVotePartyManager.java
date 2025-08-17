@@ -33,374 +33,285 @@ import fr.maxlego08.zvoteparty.zcore.utils.yaml.YamlUtils;
 
 public class ZVotePartyManager extends YamlUtils implements VotePartyManager {
 
-	private final ZVotePartyPlugin plugin;
-	private final List<Reward> rewards = new ArrayList<>();
-
-	private final List<Reward> partyRewards = new ArrayList<>();
-	private List<String> globalCommands = new ArrayList<>();
-	private List<String> commands = new ArrayList<>();
-	private long needVote = 50;
-
-	/**
-	 * @param plugin
-	 */
-	public ZVotePartyManager(ZVotePartyPlugin plugin) {
-		super(plugin);
-		this.plugin = plugin;
-	}
-
-	@Override
-	public void reload(CommandSender sender) {
-
-		try {
-
-			this.plugin.reloadConfig();
-			this.loadConfiguration();
-			this.plugin.getSavers().forEach(e -> e.load(this.plugin.getPersist()));
-
-			this.plugin.reloadInventories();
-			
-			message(sender, Message.RELOAD_SUCCESS);
-
-		} catch (Exception e) {
-
-			e.printStackTrace();
-			message(sender, Message.RELOAD_SUCCESS);
-
-		}
-
-	}
-
-	@Override
-	public void loadConfiguration() {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void openVote(Player player) {
-
-		if (Config.enableVoteMessage) {
-
-			message(player, Message.VOTE_INFORMATIONS);
-
-		}
-
-		if (Config.enableVoteInventory && this.plugin.getLoader() != null) {
-			this.plugin.getLoader().open(player);
-			return;
-		}
-
-		if (!Config.enableVoteMessage) {
-			message(player, "§cError in configuration, please contact an administrator.");
-		}
-
-	}
-
-	@SuppressWarnings("deprecation")
-	@Override
-	public void vote(String username, String serviceName, boolean updateVoteParty) {
-
-		OfflinePlayer offlinePlayer = Bukkit.getPlayerExact(username);
-
-		if(offlinePlayer == null) {
-			offlinePlayer = Bukkit.getOfflinePlayer(username);
-		}
-
-		this.handleVoteParty();
-
-		if (offlinePlayer != null) {
-
-			this.vote(offlinePlayer, serviceName);
-
-		} else {
-			// If the player cannot be found we will call redis
-			IStorage iStorage = this.plugin.getIStorage();
-			iStorage.performCustomVoteAction(username, serviceName, null);
-		}
-
-	}
-
-	@Override
-	public void handleVoteParty() {
-
-		IStorage iStorage = this.plugin.getIStorage();
-		iStorage.addVoteCount(1);
-
-		if (iStorage.getVoteCount() >= this.needVote) {
-			this.start();
-		}
-
-	}
-
-	@Override
-	public void vote(CommandSender sender, String username, boolean updateVoteParty) {
-
-		this.vote(username, "Serveur Minecraft Vote", updateVoteParty);
-		message(sender, Message.VOTE_SEND, "%player%", username);
-
-	}
-
-	@Override
-	public void vote(OfflinePlayer offlinePlayer, String serviceName) {
-
-		Reward reward = this.getRandomReward(RewardType.VOTE);
-
-		if (reward == null) {
-			return;
-		}
-
-		IStorage iStorage = this.plugin.getIStorage();
-
-		// If the redis configuration is active, the reward is online and the
-		// user is not connected then we will call redis
-		if (reward.needToBeOnline() && Config.storage.equals(Storage.REDIS) && !offlinePlayer.isOnline()) {
-			iStorage.performCustomVoteAction(offlinePlayer.getName(), serviceName, offlinePlayer.getUniqueId());
-			return;
-		}
-
-		// We will retrieve the PlayerVote object in asymmetric in the database
-		// and execute the vote
-		this.plugin.get(offlinePlayer, playerVote -> {
-			Vote vote = playerVote.vote(this.plugin, serviceName, reward, false);
-			iStorage.insertVote(playerVote, vote, reward);
-		}, false);
-
-	}
-
-	@SuppressWarnings("deprecation")
-	@Override
-	public boolean secretVote(String username, String serviceName) {
-
-		OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
-
-		// We will get the offline player and check that it is online
-		if (offlinePlayer == null || !offlinePlayer.isOnline()) {
-			return false;
-		}
-
-		// We'll get the reward
-		Reward reward = this.getRandomReward(RewardType.VOTE);
-
-		// If the reward is online
-		if (reward != null && reward.needToBeOnline()) {
-
-			// We will retrieve the PlayerVote object in asymmetric in the
-			// database and execute the vote
-			this.plugin.get(offlinePlayer, playerVote -> {
-				IStorage iStorage = this.plugin.getIStorage();
-				Vote vote = playerVote.vote(this.plugin, serviceName, reward, false);
-				iStorage.insertVote(playerVote, vote, reward);
-			}, false);
-			return true;
-		}
-
-		return false;
-	}
-
-	@Override
-	public Reward getRandomReward(RewardType type) {
-
-		double percent = ThreadLocalRandom.current().nextDouble(0, 100);
-
-		List<Reward> rewards = type == RewardType.VOTE ? this.rewards : this.partyRewards;
-
-		if (rewards.size() == 0) {
-			return null;
-		}
-
-		Reward reward = randomElement(rewards);
-
-		if (reward.getPercent() <= percent || reward.getPercent() >= 100) {
-			return reward;
-		}
-
-		return this.getRandomReward(type);
-
-	}
-
-	@Override
-	public void giveVotes(Player player) {
-		this.plugin.get(player, playerVote -> {
-			List<Vote> votes = playerVote.getNeedRewardVotes();
-			if (votes.size() > 0) {
-				schedule(Config.joinGiveVoteMilliSecond, () -> {
-					message(player, Message.VOTE_LATER, "%amount%", votes.size());
-					votes.forEach(e -> e.giveReward(this.plugin, player));
-				});
-				IStorage iStorage = this.plugin.getIStorage();
-				iStorage.updateRewards(player.getUniqueId());
-			}
-		}, true);
-
-	}
-
-	@Override
-	public void save(Persist persist) {
-
-	}
-
-	@Override
-	public void load(Persist persist) {
-
-		YamlConfiguration configuration = YamlConfiguration.loadConfiguration(new File(this.plugin.getDataFolder(), "config.yml"));
-		ConfigurationSection configurationSection;
-
-		this.rewards.clear();
-		Loader<Reward> loader = new RewardLoader();
-
-		try {
-			configurationSection = configuration.getConfigurationSection("rewards.");
-
-			for (String key : configurationSection.getKeys(false)) {
-				String path = "rewards." + key + ".";
-				Reward reward = loader.load(configuration, path);
-				if (reward != null) {
-					this.rewards.add(reward);
-				}
-			}
-
-		} catch (Exception e) {
-			// TODO: handle exception
-		}
-
-		Logger.info("Loaded " + this.rewards.size() + " rewards", LogType.SUCCESS);
-
-		// Party loader
-
-		this.needVote = configuration.getLong("party.votes_needed", 50);
-		this.globalCommands = configuration.getStringList("party.global_commands");
-		this.commands = configuration.getStringList("party.commands");
-
-		this.partyRewards.clear();
-		if (configuration.isConfigurationSection("party.rewards.")) {
-			try {
-				configurationSection = configuration.getConfigurationSection("party.rewards.");
-
-				for (String key : configurationSection.getKeys(false)) {
-					String path = "party.rewards." + key + ".";
-					Reward reward = loader.load(configuration, path);
-					if (reward != null) {
-						this.partyRewards.add(reward);
-					}
-				}
-			} catch (Exception e) {
-				// TODO: handle exception
-			}
-		}
-	}
-
-	@Override
-	public List<String> getGlobalCommands() {
-		return this.globalCommands;
-	}
-
-	@Override
-	public List<Reward> getPartyReward() {
-		return this.partyRewards;
-	}
-
-	@Override
-	public long getNeedVotes() {
-		return this.needVote;
-	}
-
-	@Override
-	public long getPlayerVoteCount(Player player) {
-		PlayerManager manager = this.plugin.getPlayerManager();
-		// We will retrieve the player in a symmetrical way, we will not search
-		// in the database
-		Optional<PlayerVote> optional = manager.getSyncPlayer(player);
-		if (optional.isPresent()) {
-			PlayerVote playerVote = optional.get();
-			return playerVote.getVoteCount();
-		}
-		return 0;
-	}
-
-	@Override
-	public void sendNeedVote(CommandSender sender) {
-		message(sender, Message.VOTE_NEEDED);
-	}
-
-	@Override
-	public void forceStart(CommandSender sender) {
-		message(sender, Message.VOTE_STARTPARTY);
-		this.start();
-	}
-
-	@Override
-	public void start() {
-
-		IStorage iStorage = this.plugin.getIStorage();
-		iStorage.startVoteParty();
-		this.secretStart();
-
-	}
-
-	@Override
-	public void secretStart() {
-		for (Player player : Bukkit.getOnlinePlayers()) {
-
-			ZVotePartyPlugin.getScheduler().runNextTick(task ->
-					this.globalCommands.forEach(command -> {
-						command = command.replace("%player%", player.getName());
-						Bukkit.dispatchCommand(Bukkit.getConsoleSender(), this.papi(command, player));
-					}));
-
-			Reward reward = this.getRandomReward(RewardType.PARTY);
-			if (reward != null) {
-				reward.give(this.plugin, player);
-			}
-
-		}
-
-		ZVotePartyPlugin.getScheduler().runNextTick(task ->
-				this.commands.forEach(command -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command))
-		);
-
-		broadcast(Message.VOTE_PARTY_START);
-	}
-
-	@Override
-	public void removeVote(CommandSender sender, OfflinePlayer player) {
-		PlayerManager manager = this.plugin.getPlayerManager();
-		manager.getPlayer(player, optional -> {
-
-			if (!optional.isPresent()) {
-				message(sender, Message.VOTE_REMOVE_ERROR, "%player%", player.getName());
-				return;
-			}
-			PlayerVote playerVote = optional.get();
-
-			if (playerVote.getVoteCount() == 0) {
-				message(sender, Message.VOTE_REMOVE_ERROR, "%player%", player.getName());
-				return;
-			}
-
-			playerVote.removeVote();
-			message(sender, Message.VOTE_REMOVE_SUCCESS, "%player%", player.getName());
-		}, true);
-	}
-
-	@Override
-	public void voteOffline(UUID uniqueId, String serviceName) {
-
-		Reward reward = this.getRandomReward(RewardType.VOTE);
-
-		if (reward == null) {
-			return;
-		}
-
-		IStorage iStorage = this.plugin.getIStorage();
-
-		// We will retrieve the PlayerVote object in asymmetric in the database
-		// and execute the vote
-		this.plugin.get(uniqueId, playerVote -> {
-			Vote vote = playerVote.vote(this.plugin, serviceName, reward, true);
-			iStorage.insertVote(playerVote, vote, reward);
-		}, false);
-
-	}
-
+    private final ZVotePartyPlugin plugin;
+    private final List<Reward> rewards = new ArrayList<>();
+    private final List<Reward> partyRewards = new ArrayList<>();
+    private List<String> globalCommands = new ArrayList<>();
+    private List<String> commands = new ArrayList<>();
+    private long needVote = 50;
+
+    public ZVotePartyManager(ZVotePartyPlugin plugin) {
+        super(plugin);
+        this.plugin = plugin;
+    }
+
+    @Override
+    public void reload(CommandSender sender) {
+        try {
+            this.plugin.reloadConfig();
+            this.loadConfiguration();
+            this.plugin.getSavers().forEach(e -> e.load(this.plugin.getPersist()));
+            message(sender, Message.RELOAD_SUCCESS);
+        } catch (Exception e) {
+            Bukkit.getLogger().warning("Failed to reload ZVoteParty: " + e.getMessage());
+            e.printStackTrace();
+            message(sender, Message.RELOAD_SUCCESS);
+        }
+    }
+
+    @Override
+    public void loadConfiguration() {
+        File configFile = new File(this.plugin.getDataFolder(), "config.yml");
+        if (!configFile.exists()) {
+            Logger.warning("Config file not found. Using default settings.");
+            return;
+        }
+
+        YamlConfiguration configuration = YamlConfiguration.loadConfiguration(configFile);
+        Loader<Reward> loader = new RewardLoader();
+
+        // Load vote rewards
+        this.rewards.clear();
+        try {
+            ConfigurationSection section = configuration.getConfigurationSection("rewards");
+            if (section != null) {
+                for (String key : section.getKeys(false)) {
+                    String path = "rewards." + key + ".";
+                    Reward reward = loader.load(configuration, path);
+                    if (reward != null) this.rewards.add(reward);
+                }
+            }
+        } catch (Exception e) {
+            Logger.warning("Error loading vote rewards: " + e.getMessage());
+        }
+
+        // Load party rewards
+        this.partyRewards.clear();
+        try {
+            ConfigurationSection section = configuration.getConfigurationSection("party.rewards");
+            if (section != null) {
+                for (String key : section.getKeys(false)) {
+                    String path = "party.rewards." + key + ".";
+                    Reward reward = loader.load(configuration, path);
+                    if (reward != null) this.partyRewards.add(reward);
+                }
+            }
+        } catch (Exception e) {
+            Logger.warning("Error loading party rewards: " + e.getMessage());
+        }
+
+        // Load commands and votes needed
+        this.needVote = configuration.getLong("party.votes_needed", 50);
+        this.globalCommands = configuration.getStringList("party.global_commands");
+        this.commands = configuration.getStringList("party.commands");
+
+        Logger.info("Loaded " + this.rewards.size() + " vote rewards and " +
+                    this.partyRewards.size() + " party rewards", LogType.SUCCESS);
+    }
+
+    @Override
+    public void openVote(Player player) {
+        if (Config.enableVoteMessage) message(player, Message.VOTE_INFORMATIONS);
+        if (Config.enableVoteInventory && this.plugin.getLoader() != null) {
+            this.plugin.getLoader().open(player);
+            return;
+        }
+        if (!Config.enableVoteMessage) message(player, "§cError in configuration, contact admin.");
+    }
+
+    @Override
+    public void vote(String username, String serviceName, boolean updateVoteParty) {
+        OfflinePlayer offlinePlayer = Bukkit.getPlayerExact(username);
+        if (offlinePlayer == null) offlinePlayer = Bukkit.getOfflinePlayer(username);
+
+        this.handleVoteParty();
+
+        if (offlinePlayer != null) {
+            this.vote(offlinePlayer, serviceName);
+        } else {
+            IStorage iStorage = this.plugin.getIStorage();
+            iStorage.performCustomVoteAction(username, serviceName, null);
+        }
+    }
+
+    @Override
+    public void handleVoteParty() {
+        IStorage iStorage = this.plugin.getIStorage();
+        iStorage.addVoteCount(1);
+        if (iStorage.getVoteCount() >= this.needVote) this.start();
+    }
+
+    @Override
+    public void vote(CommandSender sender, String username, boolean updateVoteParty) {
+        this.vote(username, "Serveur Minecraft Vote", updateVoteParty);
+        message(sender, Message.VOTE_SEND, "%player%", username);
+    }
+
+    @Override
+    public void vote(OfflinePlayer offlinePlayer, String serviceName) {
+        Reward reward = getRandomReward(RewardType.VOTE);
+        if (reward == null) {
+            Bukkit.getLogger().info("No vote reward available for " + offlinePlayer.getName());
+            return;
+        }
+
+        IStorage iStorage = this.plugin.getIStorage();
+        if (reward.needToBeOnline() && Config.storage.equals(Storage.REDIS) && !offlinePlayer.isOnline()) {
+            iStorage.performCustomVoteAction(offlinePlayer.getName(), serviceName, offlinePlayer.getUniqueId());
+            return;
+        }
+
+        this.plugin.get(offlinePlayer, playerVote -> {
+            try {
+                Vote vote = playerVote.vote(this.plugin, serviceName, reward, false);
+                iStorage.insertVote(playerVote, vote, reward);
+            } catch (Exception e) {
+                Bukkit.getLogger().warning("Failed to process vote for " + offlinePlayer.getName());
+                e.printStackTrace();
+            }
+        }, false);
+    }
+
+    @Override
+    public boolean secretVote(String username, String serviceName) {
+        OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
+        if (offlinePlayer == null || !offlinePlayer.isOnline()) return false;
+
+        Reward reward = getRandomReward(RewardType.VOTE);
+        if (reward == null || !reward.needToBeOnline()) return false;
+
+        this.plugin.get(offlinePlayer, playerVote -> {
+            IStorage iStorage = this.plugin.getIStorage();
+            Vote vote = playerVote.vote(this.plugin, serviceName, reward, false);
+            iStorage.insertVote(playerVote, vote, reward);
+        }, false);
+
+        return true;
+    }
+
+    @Override
+    public Reward getRandomReward(RewardType type) {
+        List<Reward> list = type == RewardType.VOTE ? this.rewards : this.partyRewards;
+        if (list.isEmpty()) return null;
+
+        int maxAttempts = 10;
+        for (int i = 0; i < maxAttempts; i++) {
+            Reward reward = list.get(ThreadLocalRandom.current().nextInt(list.size()));
+            double chance = ThreadLocalRandom.current().nextDouble(0, 100);
+            if (reward.getPercent() >= chance) return reward;
+        }
+        return list.get(ThreadLocalRandom.current().nextInt(list.size()));
+    }
+
+    @Override
+    public void giveVotes(Player player) {
+        this.plugin.get(player, playerVote -> {
+            List<Vote> votes = playerVote.getNeedRewardVotes();
+            if (!votes.isEmpty()) {
+                schedule(Config.joinGiveVoteMilliSecond, () -> {
+                    message(player, Message.VOTE_LATER, "%amount%", votes.size());
+                    votes.forEach(e -> {
+                        try { e.giveReward(this.plugin, player); }
+                        catch (Exception ex) { Bukkit.getLogger().warning("Failed to give reward to " + player.getName()); }
+                    });
+                });
+                IStorage iStorage = this.plugin.getIStorage();
+                iStorage.updateRewards(player.getUniqueId());
+            }
+        }, true);
+    }
+
+    @Override
+    public void start() {
+        IStorage iStorage = this.plugin.getIStorage();
+        iStorage.startVoteParty();
+        this.secretStart();
+    }
+
+    @Override
+    public void secretStart() {
+        List<Player> online = new ArrayList<>(Bukkit.getOnlinePlayers());
+
+        ZVotePartyPlugin.getScheduler().runNextTick(task -> {
+            for (Player player : online) {
+                for (String cmd : this.globalCommands) {
+                    if (cmd == null || cmd.isEmpty()) continue;
+                    try { Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd.replace("%player%", player.getName())); }
+                    catch (Exception e) { Bukkit.getLogger().warning("Failed global command: " + cmd); }
+                }
+
+                Reward reward = getRandomReward(RewardType.PARTY);
+                if (reward != null) {
+                    try { reward.give(this.plugin, player); }
+                    catch (Exception e) { Bukkit.getLogger().warning("Failed to give party reward to " + player.getName()); }
+                }
+            }
+
+            for (String cmd : this.commands) {
+                if (cmd == null || cmd.isEmpty()) continue;
+                try { Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd); }
+                catch (Exception e) { Bukkit.getLogger().warning("Failed party command: " + cmd); }
+            }
+        });
+
+        broadcast(Message.VOTE_PARTY_START);
+    }
+
+    @Override
+    public void removeVote(CommandSender sender, OfflinePlayer player) {
+        PlayerManager manager = this.plugin.getPlayerManager();
+        manager.getPlayer(player, optional -> {
+            if (!optional.isPresent() || optional.get().getVoteCount() == 0) {
+                message(sender, Message.VOTE_REMOVE_ERROR, "%player%", player.getName());
+                return;
+            }
+            optional.get().removeVote();
+            message(sender, Message.VOTE_REMOVE_SUCCESS, "%player%", player.getName());
+        }, true);
+    }
+
+    @Override
+    public void voteOffline(UUID uniqueId, String serviceName) {
+        Reward reward = getRandomReward(RewardType.VOTE);
+        if (reward == null) return;
+
+        IStorage iStorage = this.plugin.getIStorage();
+        this.plugin.get(uniqueId, playerVote -> {
+            try {
+                Vote vote = playerVote.vote(this.plugin, serviceName, reward, true);
+                iStorage.insertVote(playerVote, vote, reward);
+            } catch (Exception e) {
+                Bukkit.getLogger().warning("Failed offline vote for " + uniqueId);
+            }
+        }, false);
+    }
+
+    @Override
+    public List<String> getGlobalCommands() { return this.globalCommands; }
+
+    @Override
+    public List<Reward> getPartyReward() { return this.partyRewards; }
+
+    @Override
+    public long getNeedVotes() { return this.needVote; }
+
+    @Override
+    public long getPlayerVoteCount(Player player) {
+        Optional<PlayerVote> optional = this.plugin.getPlayerManager().getSyncPlayer(player);
+        return optional.map(PlayerVote::getVoteCount).orElse(0L);
+    }
+
+    @Override
+    public void sendNeedVote(CommandSender sender) { message(sender, Message.VOTE_NEEDED); }
+
+    @Override
+    public void forceStart(CommandSender sender) {
+        message(sender, Message.VOTE_STARTPARTY);
+        this.start();
+    }
+
+    @Override
+    public void save(Persist persist) {}
+    @Override
+    public void load(Persist persist) {}
 }
