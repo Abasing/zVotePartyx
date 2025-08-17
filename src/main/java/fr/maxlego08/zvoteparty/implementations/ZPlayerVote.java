@@ -19,104 +19,87 @@ import fr.maxlego08.zvoteparty.zcore.utils.ZUtils;
 
 public class ZPlayerVote extends ZUtils implements PlayerVote {
 
-	private final UUID uniqueId;
-	private final List<Vote> votes;
+    private final UUID uniqueId;
+    private final List<Vote> votes;
 
-	/**
-	 * @param uniqueId
-	 * @param votes
-	 */
-	public ZPlayerVote(UUID uniqueId) {
-		this(uniqueId, new ArrayList<>());
-	}
+    public ZPlayerVote(UUID uniqueId) {
+        this(uniqueId, new ArrayList<>());
+    }
 
-	/**
-	 * @param uniqueId
-	 * @param votes
-	 */
-	public ZPlayerVote(UUID uniqueId, List<Vote> votes) {
-		super();
-		this.uniqueId = uniqueId;
-		this.votes = votes;
-	}
+    public ZPlayerVote(UUID uniqueId, List<Vote> votes) {
+        this.uniqueId = uniqueId;
+        this.votes = votes != null ? votes : new ArrayList<>();
+    }
 
-	@Override
-	public UUID getUniqueId() {
-		return this.uniqueId;
-	}
+    @Override
+    public UUID getUniqueId() {
+        return this.uniqueId;
+    }
 
-	@Override
-	public OfflinePlayer getPlayer() {
-		return Bukkit.getOfflinePlayer(this.uniqueId);
-	}
+    @Override
+    public OfflinePlayer getPlayer() {
+        return Bukkit.getOfflinePlayer(this.uniqueId);
+    }
 
-	@Override
-	public List<Vote> getVotes() {
-		return this.votes;
-	}
+    @Override
+    public List<Vote> getVotes() {
+        return this.votes;
+    }
 
-	@Override
-	public int getVoteCount() {
-		return this.votes.size();
-	}
+    @Override
+    public int getVoteCount() {
+        return this.votes.size();
+    }
 
-@Override
-public Vote vote(Plugin plugin, String serviceName, Reward reward, boolean forceStorage) {
-    OfflinePlayer offlinePlayer = this.getPlayer();
-    boolean isOnline = offlinePlayer.isOnline();
-    boolean give = false;
+    @Override
+    public Vote vote(Plugin plugin, String serviceName, Reward reward, boolean forceStorage) {
+        if (plugin == null || reward == null || serviceName == null) return null;
 
-    if (!forceStorage) {
-        if (isOnline) {
-            Player player = offlinePlayer.getPlayer();
-            if (player != null) message(player, Message.VOTE_MESSAGE, "%player%", player.getName());
-        }
+        OfflinePlayer offlinePlayer = getPlayer();
+        boolean give = false;
 
-        if (Config.enableActionBarVoteAnnonce) {
-            broadcast(Message.VOTE_BROADCAST_ACTION, "%player%", offlinePlayer.getName());
-        }
+        if (!forceStorage) {
+            try {
+                if (offlinePlayer.isOnline()) {
+                    Player player = offlinePlayer.getPlayer();
+                    message(player, Message.VOTE_MESSAGE, "%player%", player.getName());
+                }
 
-        if (Config.enableTchatVoteAnnonce) {
-            broadcast(Message.VOTE_BROADCAST_TCHAT, "%player%", offlinePlayer.getName());
-        }
+                if (Config.enableActionBarVoteAnnonce) broadcast(Message.VOTE_BROADCAST_ACTION, "%player%", offlinePlayer.getName());
+                if (Config.enableTchatVoteAnnonce) broadcast(Message.VOTE_BROADCAST_TCHAT, "%player%", offlinePlayer.getName());
 
-        try {
-            if (reward != null) {
-                if (reward.needToBeOnline() && isOnline) {
-                    give = true;
-                    reward.give(plugin, offlinePlayer);
-                } else if (!reward.needToBeOnline()) {
+                if (reward.needToBeOnline()) {
+                    if (offlinePlayer.isOnline()) {
+                        give = true;
+                        reward.give(plugin, offlinePlayer);
+                    }
+                } else {
                     give = true;
                     reward.give(plugin, offlinePlayer);
                 }
-            } else {
-                Bukkit.getLogger().warning("zVoteParty: Reward is null for vote by " + offlinePlayer.getName());
+            } catch (Exception e) {
+                plugin.getLogger().warning("Failed to process vote for " + offlinePlayer.getName() + ": " + e.getMessage());
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            Bukkit.getLogger().warning("zVoteParty: Error giving reward to " + offlinePlayer.getName() + ": " + e.getMessage());
         }
+
+        Vote vote = new ZVote(serviceName, reward, give);
+        this.votes.add(vote);
+        return vote;
     }
 
-    Vote vote = new ZVote(serviceName, reward, give);
-    this.votes.add(vote);
-    return vote;
-}
+    @Override
+    public String getFileName() {
+        return this.uniqueId.toString();
+    }
 
-	@Override
-	public String getFileName() {
-		return this.uniqueId.toString();
-	}
+    @Override
+    public List<Vote> getNeedRewardVotes() {
+        return this.votes.stream().filter(v -> !v.rewardIsGive()).collect(Collectors.toList());
+    }
 
-	@Override
-	public List<Vote> getNeedRewardVotes() {
-		return this.votes.stream().filter(v -> !v.rewardIsGive()).collect(Collectors.toList());
-	}
-
-	@Override
-	public void removeVote() {
-		if (votes.size() != 0) {
-			votes.remove(0);
-		}
-	}
-
+    @Override
+    public void removeVote() {
+        if (!votes.isEmpty()) votes.remove(0);
+    }
 }
