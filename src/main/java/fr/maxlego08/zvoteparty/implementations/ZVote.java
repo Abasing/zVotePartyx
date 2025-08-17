@@ -54,10 +54,18 @@ public class ZVote implements Vote {
 		return this.rewardIsGive;
 	}
 
-	@Override
-	public void giveReward(Plugin plugin, Player player) {
-		this.rewardIsGive = true;
-		this.reward.give(plugin, player);
-	}
+@Override
+public void giveReward(Plugin plugin, Player player) {
+    if (player == null || reward == null) {
+        Bukkit.getLogger().warning("zVoteParty: Cannot give reward. Player or reward is null.");
+        return;
+    }
+    try {
+        reward.give(plugin, player);
+        this.rewardIsGive = true;
+    } catch (Exception e) {
+        Bukkit.getLogger().warning("zVoteParty: Error giving reward to " + player.getName() + ": " + e.getMessage());
+    }
+}
 
 }
