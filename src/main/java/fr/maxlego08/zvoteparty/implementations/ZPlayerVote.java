@@ -60,41 +60,47 @@ public class ZPlayerVote extends ZUtils implements PlayerVote {
 		return this.votes.size();
 	}
 
-	@Override
-	public Vote vote(Plugin plugin, String serviceName, Reward reward, boolean forceStorage) {
+@Override
+public Vote vote(Plugin plugin, String serviceName, Reward reward, boolean forceStorage) {
+    OfflinePlayer offlinePlayer = this.getPlayer();
+    boolean isOnline = offlinePlayer.isOnline();
+    boolean give = false;
 
-		OfflinePlayer offlinePlayer = this.getPlayer();
+    if (!forceStorage) {
+        if (isOnline) {
+            Player player = offlinePlayer.getPlayer();
+            if (player != null) message(player, Message.VOTE_MESSAGE, "%player%", player.getName());
+        }
 
-		boolean give = false;
-		if (!forceStorage) {
-			if (offlinePlayer.isOnline()) {
-				Player player = offlinePlayer.getPlayer();
-				message(player, Message.VOTE_MESSAGE, "%player%", player.getName());
-			}
+        if (Config.enableActionBarVoteAnnonce) {
+            broadcast(Message.VOTE_BROADCAST_ACTION, "%player%", offlinePlayer.getName());
+        }
 
-			if (Config.enableActionBarVoteAnnonce) {
-				broadcast(Message.VOTE_BROADCAST_ACTION, "%player%", offlinePlayer.getName());
-			}
+        if (Config.enableTchatVoteAnnonce) {
+            broadcast(Message.VOTE_BROADCAST_TCHAT, "%player%", offlinePlayer.getName());
+        }
 
-			if (Config.enableTchatVoteAnnonce) {
-				broadcast(Message.VOTE_BROADCAST_TCHAT, "%player%", offlinePlayer.getName());
-			}
+        try {
+            if (reward != null) {
+                if (reward.needToBeOnline() && isOnline) {
+                    give = true;
+                    reward.give(plugin, offlinePlayer);
+                } else if (!reward.needToBeOnline()) {
+                    give = true;
+                    reward.give(plugin, offlinePlayer);
+                }
+            } else {
+                Bukkit.getLogger().warning("zVoteParty: Reward is null for vote by " + offlinePlayer.getName());
+            }
+        } catch (Exception e) {
+            Bukkit.getLogger().warning("zVoteParty: Error giving reward to " + offlinePlayer.getName() + ": " + e.getMessage());
+        }
+    }
 
-			if (reward.needToBeOnline()) {
-				if (offlinePlayer.isOnline()) {
-					give = true;
-					reward.give(plugin, offlinePlayer);
-				}
-			} else {
-				give = true;
-				reward.give(plugin, offlinePlayer);
-			}
-		}
-
-		Vote vote = new ZVote(serviceName, reward, give);
-		this.votes.add(vote);
-		return vote;
-	}
+    Vote vote = new ZVote(serviceName, reward, give);
+    this.votes.add(vote);
+    return vote;
+}
 
 	@Override
 	public String getFileName() {
