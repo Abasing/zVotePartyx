@@ -101,7 +101,7 @@
         <repository>
             <id>groupez-releases</id>
             <name>GroupeZ Repository</name>
-            <url>https://repo.groupez.dev/releases</url>
+            <url>https://repo.groupez.dev/#/releases/fr/maxlego08/menu/zmenu-api/1.1.0.2</url>
         </repository>
     </repositories>
 
