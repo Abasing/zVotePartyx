@@ -72,7 +72,7 @@ rewards:
 party:
   # The amount of votes needed
   votes_needed: 50
-  
+  only_voters_rewards: true   # true = only players who voted get VP rewards
   # The command that will be executed when the number of votes is reached for each online players
   global_commands:
     - "eco give %player% 100"
